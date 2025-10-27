@@ -1,0 +1,18 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+  <meta charset="UTF-8">
+  <title>Meu PWA</title>
+  <link rel="manifest" href="manifest.json">
+</head>
+<body>
+  <h1>Olá, Marcus!</h1>
+  <p>Este é um exemplo de PWA simples.</p>
+
+  <script>
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('sw.js');
+    }
+  </script>
+</body>
+</html>
