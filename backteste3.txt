@@ -1,0 +1,192 @@
+using System;
+using cAlgo.API;
+using cAlgo.API.Collections;
+using cAlgo.API.Indicators;
+using cAlgo.API.Internals;
+
+namespace cAlgo.Robots
+{
+    [Robot(AccessRights = AccessRights.None, AddIndicators = true)]
+    public class milhao : Robot
+    {
+    
+        private const string Label = "milhao";
+
+        [Parameter("Volume (Lots)",Group = "Ordem" ,DefaultValue = 0.01)]
+        public double VolumeInLots { get; set; } 
+        [Parameter("Take em Pontos",Group = "Ordem" ,DefaultValue = 200)]
+        public double PontosTake { get; set; }
+        [Parameter("Stop em Pontos",Group = "Ordem" ,DefaultValue = 600)]
+        public double PontosStop { get; set; }
+        [Parameter("Espaço entre as ordens pendentes",Group = "Ordem" ,DefaultValue = 50)]
+        public int DistPendenteOrdem { get; set; }
+        
+        public enum Option
+        {
+            TakeStop,
+            BreaKEven,
+            HasTrailingStop
+        }
+
+        [Parameter("Tipo de Stop", Group = "Ordem" ,DefaultValue = Option.TakeStop)]
+        public Option OpStop { get; set; }
+        
+        [Parameter("Source", Group = "RSI")]
+        public DataSeries SourceRSI { get; set; }
+        [Parameter("Periods", Group = "RSI", DefaultValue = 14)]
+        public int PeriodsRSI { get; set; }
+        [Parameter("Limite Sup", Group = "RSI", DefaultValue = 65)]
+        public int RSILimSup { get; set; }
+        [Parameter("Limite Inf", Group = "RSI", DefaultValue = 35)]
+        public int RSILimInf { get; set; }
+        
+        
+        
+        [Parameter("Source", Group = "Hull Fast MA")]
+        public DataSeries FastMaSource { get; set; }
+        [Parameter("Period", DefaultValue = 9, Group = "Hull Fast MA")]
+        public int FastMaPeriod { get; set; }
+        [Parameter("Source", Group = " Hull Slow MA")]
+        public DataSeries SlowMaSource { get; set; }
+        [Parameter("Period", DefaultValue = 20, Group = "Hull Slow MA")]
+        public int SlowMaPeriod { get; set; }
+        
+        private HullMovingAverage _fastHull;
+        private HullMovingAverage _slowHull;
+        private RelativeStrengthIndex rsi;
+        private MacdCrossOver _macdCrossOver;
+        
+        private double _volumeInUnits;
+        private double TakeProfit;
+        private double StopLoss;
+        private int numPendenteOrdens;
+        
+        private bool ind1_buy;
+        private bool ind1_sell;
+        private bool ind2_buy;
+        private bool ind2_sell;
+
+        protected override void OnStart()
+        {             
+            _volumeInUnits = Symbol.QuantityToVolumeInUnits(VolumeInLots); 
+            //distPendenteOrdem = 50;
+            TakeProfit = VolumeInLots * PontosTake;
+            StopLoss = VolumeInLots * PontosStop;    
+            numPendenteOrdens = 4;
+            rsi = Indicators.RelativeStrengthIndex(SourceRSI, PeriodsRSI);
+            _fastHull = Indicators.HullMovingAverage(FastMaSource, FastMaPeriod);
+            _slowHull = Indicators.HullMovingAverage(SlowMaSource, SlowMaPeriod);
+            _macdCrossOver = Indicators.MacdCrossOver(Bars.ClosePrices, 26, 12, 4);
+            ConfigInicial();
+        }
+        protected override void OnTick()
+        {            
+            VerificarEncerramento();            
+        }
+        protected override void OnBar()
+        {
+            Ind1();
+            if(ind1_buy || ind1_sell)
+            {
+                Ind2();
+                if(ind1_buy && ind2_buy) AbrirOrdens(TradeType.Buy,Label);
+                if(ind1_sell && ind2_sell) AbrirOrdens(TradeType.Sell,Label);
+            }
+            
+        }        
+        private void AbrirOrdens(TradeType tradeType, String label)
+        {
+            var positions = Positions.FindAll(label,SymbolName);
+            if(positions.Length == 0)
+            {
+                var resultOrder = ExecuteMarketOrder(tradeType, SymbolName, _volumeInUnits, label);
+                
+                for(int i = 1; i <= numPendenteOrdens; i++)
+                {
+                    if(tradeType == TradeType.Buy) PlaceLimitOrder(tradeType, SymbolName, _volumeInUnits, resultOrder.Position.EntryPrice - DistPendenteOrdem * Symbol.PipSize * i,label);
+                    if(tradeType == TradeType.Sell) PlaceLimitOrder(tradeType, SymbolName, _volumeInUnits, resultOrder.Position.EntryPrice + DistPendenteOrdem * Symbol.PipSize * i,label);
+                }                
+            } 
+        }        
+        public void FecharOrdens(String label)
+        {   
+            var positons = Positions.FindAll(label,SymbolName);
+            foreach (var position in positons)
+            {                
+                ClosePosition(position);                
+            }   
+            
+            foreach (var order in PendingOrders)
+            {
+                CancelPendingOrder(order);
+            }   
+            ConfigInicial();
+        }        
+        public void VerificarEncerramento()
+        {   
+            if(OpStop == Option.TakeStop)
+            {
+                
+                if(Account.UnrealizedNetProfit < - StopLoss || Account.UnrealizedNetProfit > TakeProfit) FecharOrdens(Label);
+                
+            }
+            else if(OpStop == Option.BreaKEven)
+            {
+                               
+            }
+            else if(OpStop == Option.HasTrailingStop)
+            {
+                               
+            }
+        }
+        
+        public void ConfigInicial()
+        {
+            ind1_buy = false;
+            ind1_sell = false;
+            ind2_buy = false;
+            ind2_sell = false;
+        }
+        
+        public void Ind1()
+        {
+            if (rsi.Result.LastValue < RSILimInf)
+            {
+                ind1_buy = true;
+                ind1_sell = false;
+            }
+            else if (rsi.Result.LastValue > RSILimSup)
+            {
+                ind1_buy = false;
+                ind1_sell = true;
+            }
+        }
+        public void Ind22()
+        {
+            if (_fastHull.Result.HasCrossedAbove(_slowHull.Result, 0))
+             {
+                 ind2_buy = true;
+                 ind2_sell = false;
+             }
+             else if (_fastHull.Result.HasCrossedBelow(_slowHull.Result, 0))
+             {
+                 ind2_buy = false;
+                 ind2_sell = true;
+             }
+        }
+        
+        public void Ind2()
+        {
+            if (_macdCrossOver.MACD.Last(1) > _macdCrossOver.Signal.Last(1) && _macdCrossOver.MACD.Last(2) <= _macdCrossOver.Signal.Last(2))
+             {
+                 ind2_buy = true;
+                 ind2_sell = false;
+             }
+             else if (_macdCrossOver.MACD.Last(1) < _macdCrossOver.Signal.Last(1) && _macdCrossOver.MACD.Last(2) >= _macdCrossOver.Signal.Last(2))
+             {
+                 ind2_buy = false;
+                 ind2_sell = true;
+             }                         
+        }   
+    }
+}
